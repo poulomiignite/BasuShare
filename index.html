@@ -19,6 +19,8 @@
         .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); }
         .tab-active { color: #f43f5e; transform: scale(1.2); transition: all 0.3s ease; }
         @keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(200%); } }
+        .shimmer { position: relative; overflow: hidden; }
+        .shimmer::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent); animation: loading 1.5s infinite; }
     </style>
 </head>
 <body>
@@ -29,10 +31,11 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global Firebase Holder
+        // Global Firebase Holder to bridge between module and babel scripts
         window.BasuShareFirebase = {
             initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query
+            getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query,
+            sdkReady: true
         };
         window.dispatchEvent(new Event('firebase-sdk-ready'));
     </script>
@@ -61,10 +64,11 @@
         const CURRENCIES = { EUR: '€', USD: '$', INR: '₹', HKD: 'HK$' };
 
         const Avatar = ({ name, size = 'w-10 h-10', active = false }) => {
-            const color = AVATAR_COLORS[(name || 'Guest').length % AVATAR_COLORS.length] || 'bg-gray-200';
+            const safeName = name || 'Guest';
+            const color = AVATAR_COLORS[safeName.length % AVATAR_COLORS.length];
             return (
                 <div className={`${size} ${color} rounded-full flex items-center justify-center font-bold text-gray-700 uppercase tracking-tighter text-[10px] relative transition-all ${active ? 'ring-4 ring-rose-100 shadow-lg' : ''}`}>
-                    {(name || 'G').substring(0, 2)}
+                    {safeName.substring(0, 2)}
                     {active && <div className="absolute -bottom-1 -right-1 bg-rose-500 text-white rounded-full p-0.5 shadow-sm border border-white"><Icons.Check /></div>}
                 </div>
             );
@@ -83,50 +87,49 @@
             const [showAddMember, setShowAddMember] = useState(false);
             const [editingExpense, setEditingExpense] = useState(null);
             const [toast, setToast] = useState(null);
+            const [currentMemberId, setCurrentMemberId] = useState(() => localStorage.getItem('basu_identity'));
             const [recentGroups, setRecentGroups] = useState(() => {
                 try { return JSON.parse(localStorage.getItem('basu_recents') || '[]'); } catch(e) { return []; }
             });
-            const [currentMemberId, setCurrentMemberId] = useState(() => localStorage.getItem('basu_identity'));
 
-            // Initial Firebase Handshake
+            // Reliable Firebase Setup
             useEffect(() => {
                 const initialize = async () => {
-                    if (!window.BasuShareFirebase) {
+                    const sdk = window.BasuShareFirebase;
+                    if (!sdk) {
                         window.addEventListener('firebase-sdk-ready', initialize);
                         return;
                     }
                     
-                    const { initializeApp, getAuth, getFirestore, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = window.BasuShareFirebase;
-                    
                     try {
                         const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-                        const app = initializeApp(config);
-                        const fbAuth = getAuth(app);
-                        const fbDb = getFirestore(app);
+                        const app = sdk.initializeApp(config);
+                        const fbAuth = sdk.getAuth(app);
+                        const fbDb = sdk.getFirestore(app);
                         
                         setAuth(fbAuth);
                         setDb(fbDb);
 
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(fbAuth, __initial_auth_token);
+                            await sdk.signInWithCustomToken(fbAuth, __initial_auth_token);
                         } else {
-                            await signInAnonymously(fbAuth);
+                            await sdk.signInAnonymously(fbAuth);
                         }
 
-                        onAuthStateChanged(fbAuth, (u) => {
+                        sdk.onAuthStateChanged(fbAuth, (u) => {
                             if (u) setUser(u);
                         });
                     } catch (e) {
-                        console.error("Initialization error:", e);
+                        console.error("BasuShare Init Error:", e);
                     }
                 };
 
                 initialize();
             }, []);
 
-            // URL Hash Syncing
+            // URL Router
             useEffect(() => {
-                const syncHash = () => {
+                const sync = () => {
                     const hash = decodeURIComponent(window.location.hash.replace('#', ''));
                     if (hash) {
                         setGroupId(hash);
@@ -141,12 +144,12 @@
                         setView('home');
                     }
                 };
-                window.addEventListener('hashchange', syncHash);
-                syncHash();
-                return () => window.removeEventListener('hashchange', syncHash);
+                window.addEventListener('hashchange', sync);
+                sync();
+                return () => window.removeEventListener('hashchange', sync);
             }, []);
 
-            // Data Subscription
+            // Real-time Data Listeners
             useEffect(() => {
                 if (!db || !user || !groupId) return;
                 const { collection, onSnapshot } = window.BasuShareFirebase;
@@ -159,7 +162,7 @@
                 return () => { uM(); uE(); };
             }, [db, user, groupId]);
 
-            // Persist Identity
+            // Track Identity
             useEffect(() => {
                 if (currentMemberId) localStorage.setItem('basu_identity', currentMemberId);
                 else localStorage.removeItem('basu_identity');
@@ -208,19 +211,19 @@
             const symbol = CURRENCIES[currency] || '€';
 
             if (!db || !user) return (
-                <div className="h-screen bg-rose-50 flex flex-col items-center justify-center text-rose-500 p-10">
-                    <div className="animate-bounce mb-6"><Icons.Heart /></div>
-                    <div className="text-center space-y-4">
-                        <p className="font-extrabold tracking-widest uppercase text-sm">Waking up BasuShare...</p>
-                        <div className="h-1.5 w-48 bg-rose-100 rounded-full overflow-hidden mx-auto relative">
-                            <div className="h-full bg-rose-400 w-1/2 absolute animate-[loading_1.5s_infinite]"></div>
+                <div className="h-screen bg-rose-50 flex flex-col items-center justify-center text-rose-500 p-10 animate-fade">
+                    <div className="animate-bounce mb-8"><Icons.Heart /></div>
+                    <div className="text-center space-y-6 w-full max-w-xs">
+                        <p className="font-extrabold tracking-[0.2em] uppercase text-sm">Waking up BasuShare...</p>
+                        <div className="h-1.5 w-full bg-rose-100 rounded-full overflow-hidden relative shadow-inner">
+                            <div className="h-full bg-rose-400 w-1/3 absolute shimmer"></div>
                         </div>
-                        <p className="text-[10px] opacity-60 font-bold uppercase tracking-widest">Checking family ledger</p>
+                        <p className="text-[10px] opacity-60 font-black uppercase tracking-widest">Securely Syncing Ledger</p>
                     </div>
                 </div>
             );
 
-            // --- Home Workspace ---
+            // --- Workspace Hub ---
             if (view === 'home' || !groupId) return (
                 <div className="flex flex-col h-screen max-w-md mx-auto bg-white animate-pop overflow-hidden">
                     <header className="p-10 pt-16 text-center shrink-0">
@@ -232,25 +235,25 @@
                         <section className="bg-gradient-to-br from-rose-400 to-rose-500 p-8 rounded-[3rem] shadow-xl text-white relative overflow-hidden">
                             <div className="absolute top-0 right-0 p-8 opacity-10 scale-150"><Icons.Plus /></div>
                             <h2 className="text-xl font-bold mb-1 tracking-tight">New shared space?</h2>
-                            <p className="text-rose-50 text-sm mb-6 opacity-80 italic">Enter a name for your circle.</p>
+                            <p className="text-rose-50 text-sm mb-6 opacity-80 italic">Enter a name for your group.</p>
                             <form onSubmit={(e) => { e.preventDefault(); window.location.hash = encodeURIComponent(e.target.gid.value); e.target.reset(); }} className="space-y-4">
-                                <input name="gid" required placeholder="Ex: Family-Hub" className="w-full bg-white/20 border-none rounded-2xl p-5 text-white placeholder:text-white/50 focus:ring-2 focus:ring-white outline-none font-bold text-lg" />
+                                <input name="gid" required placeholder="Ex: Family-Dinner" className="w-full bg-white/20 border-none rounded-2xl p-5 text-white placeholder:text-white/50 focus:ring-2 focus:ring-white outline-none font-bold text-lg" />
                                 <button className="w-full bg-white text-rose-500 py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest active:scale-95 shadow-lg transition-transform">Create Circle</button>
                             </form>
                         </section>
-                        <section className="space-y-6">
-                            <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest px-4">Your Recent Circles</h3>
+                        <section className="space-y-6 px-2">
+                            <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest">Active Circles</h3>
                             <div className="grid grid-cols-1 gap-4">
                                 {recentGroups.map(g => (
-                                    <div key={g.id} onClick={() => window.location.hash = encodeURIComponent(g.id)} className="w-full bg-white border-2 border-gray-50 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm hover:border-rose-100 transition-all active:scale-[0.98] cursor-pointer group">
+                                    <div key={g.id} onClick={() => window.location.hash = encodeURIComponent(g.id)} className="w-full bg-white border-2 border-gray-50 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm hover:border-rose-100 transition-all active:scale-[0.98] cursor-pointer group animate-fade">
                                         <div className="overflow-hidden">
                                             <p className="font-extrabold text-gray-800 text-xl tracking-tight group-hover:text-rose-500 truncate max-w-[200px]">{g.id}</p>
-                                            <p className="text-[9px] text-gray-400 font-bold uppercase mt-1 tracking-widest">Tap to sync</p>
+                                            <p className="text-[9px] text-gray-400 font-bold uppercase mt-1 tracking-widest">Open workspace</p>
                                         </div>
-                                        <button onClick={(e) => { e.stopPropagation(); const next = recentGroups.filter(x => x.id !== g.id); setRecentGroups(next); localStorage.setItem('basu_recents', JSON.stringify(next)); }} className="p-3 text-gray-300 hover:text-rose-500 transition-all active:scale-90"><Icons.Trash /></button>
+                                        <button onClick={(e) => { e.stopPropagation(); const next = recentGroups.filter(x => x.id !== g.id); setRecentGroups(next); localStorage.setItem('basu_recents', JSON.stringify(next)); }} className="p-3 text-gray-200 hover:text-rose-500 transition-all active:scale-90"><Icons.Trash /></button>
                                     </div>
                                 ))}
-                                {recentGroups.length === 0 && <p className="text-center text-xs text-gray-300 italic py-10 px-6 leading-relaxed">No shared groups yet. Create one above to start splitting!</p>}
+                                {recentGroups.length === 0 && <p className="text-center text-xs text-gray-300 italic py-10 px-6 leading-relaxed">No shared circles yet. Create one above to start!</p>}
                             </div>
                         </section>
                     </main>
@@ -261,14 +264,15 @@
             return (
                 <div className="flex flex-col h-screen max-w-md mx-auto bg-white shadow-2xl relative overflow-hidden animate-pop">
                     {toast && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2">✨ {toast}</div>}
-                    <header className="bg-teal-500 p-6 pb-20 text-white rounded-b-[3rem] relative shadow-lg">
+                    
+                    <header className="bg-teal-500 p-6 pb-20 text-white rounded-b-[3rem] relative shadow-lg shrink-0">
                         <div className="flex justify-between items-center mb-6 px-2">
                             <button onClick={() => window.location.hash = ''} className="p-2 hover:bg-white/10 rounded-full active:scale-90 transition-all"><Icons.Home /></button>
                             <h1 className="text-xl font-extrabold uppercase tracking-tight truncate max-w-[150px]">{groupId}</h1>
                             <div className="flex items-center gap-2">
                                 <button onClick={() => { 
                                     const shareUrl = `${window.location.origin}${window.location.pathname}#${groupId}`;
-                                    navigator.clipboard.writeText(shareUrl).then(() => showToast("Link copied!"));
+                                    navigator.clipboard.writeText(shareUrl).then(() => showToast("Sync link copied!"));
                                 }} className="p-2 bg-white/10 rounded-full active:scale-90"><Icons.Share /></button>
                                 <div className="bg-white/10 rounded-lg px-2 py-1 flex items-center border border-white/5">
                                     <Icons.Globe />
@@ -279,7 +283,7 @@
                             </div>
                         </div>
                         <div className="text-center">
-                            <p className="text-teal-100 text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">Total Shared Spent</p>
+                            <p className="text-teal-100 text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">Total Family Spend</p>
                             <p className="text-5xl font-black tracking-tighter">{expenses.reduce((s,e)=>s+parseFloat(e.amount || 0),0).toFixed(2)}{symbol}</p>
                         </div>
                     </header>
@@ -290,29 +294,29 @@
                                 {personalSummary && currentMemberId && (
                                     <div className="bg-gray-900 rounded-[2.5rem] p-8 shadow-xl text-white animate-pop border border-white/5">
                                         <div className="flex items-center justify-between mb-5">
-                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Your Status</p>
-                                            <div className="bg-teal-400/20 px-3 py-1 rounded-full"><p className="text-[9px] font-bold text-teal-400 uppercase tracking-widest">Active: {members.find(m => m.id === currentMemberId)?.name}</p></div>
+                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Efficiency Summary</p>
+                                            <div className="bg-teal-400/20 px-3 py-1 rounded-full"><p className="text-[9px] font-bold text-teal-400 uppercase tracking-widest">Hi, {members.find(m => m.id === currentMemberId)?.name}</p></div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="bg-white/5 rounded-3xl p-5 border border-white/5 text-center">
-                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 text-teal-400">Owed to you</p>
+                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 text-teal-400">Collect</p>
                                                 <p className="text-2xl font-mono font-black text-teal-400 leading-none">{personalSummary.owedToMe.toFixed(2)}{symbol}</p>
                                             </div>
                                             <div className="bg-white/5 rounded-3xl p-5 border border-white/5 text-center">
-                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 text-rose-400">You owe</p>
+                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 text-rose-400">Pay out</p>
                                                 <p className="text-2xl font-mono font-black text-rose-400 leading-none">{personalSummary.iOwe.toFixed(2)}{symbol}</p>
                                             </div>
                                         </div>
-                                        <button onClick={() => setCurrentMemberId(null)} className="w-full mt-6 text-[9px] font-black uppercase tracking-[0.3em] text-white/30 hover:text-white transition-all">Change Identity</button>
+                                        <button onClick={() => setCurrentMemberId(null)} className="w-full mt-6 text-[9px] font-black uppercase tracking-[0.3em] text-white/30 hover:text-white transition-all underline underline-offset-4 decoration-white/10">Switch Personal Profile</button>
                                     </div>
                                 )}
 
                                 <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-teal-50 space-y-6">
                                     <h2 className="text-[10px] font-black text-gray-300 uppercase tracking-widest text-center">
-                                        {!currentMemberId ? "Who are you? (Tap to select)" : "Family Circle Balance"}
+                                        {!currentMemberId ? "Pick your name for a personal view" : "Circle Standings"}
                                     </h2>
                                     <div className="space-y-4">
-                                        {members.length === 0 && <p className="text-center text-xs text-gray-300 italic py-6 px-4">Add family members in the partners tab to begin!</p>}
+                                        {members.length === 0 && <p className="text-center text-xs text-gray-300 italic py-6 px-4">Add members in the Partners tab!</p>}
                                         {members.map(m => (
                                             <div key={m.id} 
                                                  onClick={() => setCurrentMemberId(m.id)}
@@ -330,10 +334,10 @@
                                 </div>
                                 <div className="space-y-5">
                                     <div className="flex justify-between items-center px-4">
-                                        <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest">Recent Activity</h3>
-                                        <button onClick={() => setView('expenses')} className="text-teal-500 text-[10px] font-black uppercase tracking-widest border border-teal-100 px-3 py-1 rounded-full">Full Log</button>
+                                        <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest">Flow Log</h3>
+                                        <button onClick={() => setView('expenses')} className="text-teal-500 text-[10px] font-black uppercase tracking-widest border border-teal-100 px-3 py-1 rounded-full active:bg-teal-50">View History</button>
                                     </div>
-                                    {expenses.length === 0 && <p className="text-center py-6 text-xs text-gray-300 italic px-4">The ledger is empty. Tap the + to record your first entry.</p>}
+                                    {expenses.length === 0 && <p className="text-center py-6 text-xs text-gray-300 italic px-4 leading-relaxed">No shared history. Tap the + to log your first family bill.</p>}
                                     {expenses.slice(-3).reverse().map(e => (
                                         <div key={e.id} className={`p-6 rounded-[2.5rem] border border-gray-100 flex justify-between items-center shadow-sm transition-all ${e.isSettlement?'bg-rose-50/50 border-rose-100':'bg-white'}`}>
                                             <div className="flex items-center gap-4">
@@ -342,7 +346,7 @@
                                                 </div>
                                                 <div className="overflow-hidden">
                                                     <p className={`font-bold text-sm leading-tight truncate max-w-[140px] ${e.isSettlement?'text-rose-600 italic':'text-gray-800'}`}>{e.description}</p>
-                                                    <p className="text-[9px] text-teal-500 font-bold uppercase mt-1 tracking-tight">{members.find(m=>m.id===e.payerId)?.name || 'Someone'} paid</p>
+                                                    <p className="text-[9px] text-teal-500 font-bold uppercase mt-1 tracking-tight">{members.find(m=>m.id===e.payerId)?.name || 'Partner'} paid</p>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-4">
@@ -358,7 +362,7 @@
                         {view === 'expenses' && (
                             <div className="space-y-4 animate-pop">
                                 {expenses.map(e => (
-                                    <div key={e.id} className={`p-8 rounded-[3.5rem] border border-gray-100 shadow-sm relative ${e.isSettlement ? 'bg-rose-50 border-rose-100' : 'bg-white'}`}>
+                                    <div key={e.id} className={`p-8 rounded-[3rem] border border-gray-100 shadow-sm relative ${e.isSettlement ? 'bg-rose-50 border-rose-100' : 'bg-white'}`}>
                                         <div className="flex justify-between items-start mb-6">
                                             <div className="flex items-center gap-4">
                                                 <Avatar name={members.find(m=>m.id===e.payerId)?.name} size="w-14 h-14" />
@@ -372,7 +376,7 @@
                                                 <button onClick={async ()=>{
                                                     const {db,doc,deleteDoc}=window.BasuShareFirebase; 
                                                     await deleteDoc(doc(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`, e.id));
-                                                    showToast("Entry removed");
+                                                    showToast("Bill removed");
                                                 }} className="p-2 text-gray-400 hover:text-rose-500 transition-colors"><Icons.Trash /></button>
                                             </div>
                                         </div>
@@ -386,7 +390,7 @@
 
                         {view === 'settle' && (
                             <div className="space-y-6 animate-pop">
-                                {settlements.length === 0 ? <div className="text-center py-24 bg-rose-50 rounded-[4rem] border-2 border-dashed border-rose-100 shadow-inner px-8"><p className="font-extrabold text-rose-800 text-2xl tracking-tight leading-tight">Everything is settled! 🎉</p></div> :
+                                {settlements.length === 0 ? <div className="text-center py-24 bg-rose-50 rounded-[4rem] border-2 border-dashed border-rose-100 shadow-inner px-8"><p className="font-extrabold text-rose-800 text-2xl tracking-tight leading-tight">Zero Debt Circle! 🎉</p><p className="text-sm text-rose-400 mt-2 font-medium italic">High efficiency achieved.</p></div> :
                                 settlements.map((s,i) => (
                                     <div key={i} className="bg-gray-900 p-8 rounded-[3.5rem] text-white shadow-2xl space-y-8 border border-white/5">
                                         <div className="flex justify-between items-center text-center px-2">
@@ -397,7 +401,7 @@
                                         <button onClick={async ()=>{
                                             const { db, collection, addDoc } = window.BasuShareFirebase;
                                             await addDoc(collection(db, 'artifacts', 'basushare-app', 'public', 'data', `${groupId}-expenses`), {
-                                                description: `Settled payment: ${members.find(m => m.id === s.from)?.name} → ${members.find(m => m.id === s.to)?.name}`,
+                                                description: `Settlement payment: ${members.find(m => m.id === s.from)?.name} → ${members.find(m => m.id === s.to)?.name}`,
                                                 amount: s.amount.toString(),
                                                 payerId: s.from,
                                                 splitMethod: 'actual',
@@ -405,8 +409,8 @@
                                                 isSettlement: true,
                                                 createdAt: Date.now()
                                             });
-                                            showToast("Recorded! 🎉");
-                                        }} className="w-full bg-teal-500 text-white py-6 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl shadow-teal-900/20">Mark as Paid</button>
+                                            showToast("Dues cleared! 🎉");
+                                        }} className="w-full bg-teal-500 text-white py-6 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl shadow-teal-900/20">Confirm Dues Paid</button>
                                     </div>
                                 ))}
                             </div>
@@ -415,18 +419,18 @@
                         {view === 'members' && (
                             <div className="space-y-10 animate-pop">
                                 <div className="space-y-8">
-                                    <div className="flex justify-between items-center px-4"><h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Active Partners</h3><button onClick={()=>setShowAddMember(true)} className="bg-teal-600 text-white text-[10px] font-black px-6 py-2 rounded-full uppercase active:scale-95 shadow-lg">+ Add Family</button></div>
+                                    <div className="flex justify-between items-center px-4"><h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Family Circle</h3><button onClick={()=>setShowAddMember(true)} className="bg-teal-600 text-white text-[10px] font-black px-6 py-2 rounded-full uppercase active:scale-95 shadow-lg">+ Add Member</button></div>
                                     <div className="grid grid-cols-1 gap-4">
                                         {members.map(m=>(
-                                            <div key={m.id} className={`bg-white border border-gray-100 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm transition-all ${currentMemberId === m.id ? 'ring-4 ring-rose-50 border-rose-100' : ''}`} onClick={() => setCurrentMemberId(m.id)}>
+                                            <div key={m.id} className={`bg-white border border-gray-100 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm transition-all active:scale-[0.98] ${currentMemberId === m.id ? 'ring-4 ring-rose-50 border-rose-100' : ''}`} onClick={() => setCurrentMemberId(m.id)}>
                                                 <div className="flex items-center gap-5">
                                                     <Avatar name={m.name} size="w-14 h-14" active={currentMemberId === m.id} />
                                                     <div className="overflow-hidden">
                                                         <span className="font-extrabold text-gray-800 text-xl tracking-tight block truncate max-w-[140px]">{m.name}</span>
-                                                        <p className="text-[9px] font-black uppercase text-teal-400 tracking-widest">{currentMemberId === m.id ? 'Current User' : 'Partner'}</p>
+                                                        <p className="text-[9px] font-black uppercase text-teal-400 tracking-widest">{currentMemberId === m.id ? 'You' : 'Member'}</p>
                                                     </div>
                                                 </div>
-                                                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold shadow-inner transition-all ${currentMemberId === m.id ? 'bg-rose-500 text-white' : 'bg-teal-50 text-teal-400 opacity-30 hover:opacity-100'}`}>
+                                                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold shadow-inner transition-all ${currentMemberId === m.id ? 'bg-rose-500 text-white' : 'bg-teal-50 text-teal-400 opacity-30'}`}>
                                                     {currentMemberId === m.id ? <Icons.Check /> : '✓'}
                                                 </div>
                                             </div>
@@ -438,8 +442,8 @@
                     </main>
 
                     <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass border-t border-white/50 p-8 flex justify-between items-center z-40 rounded-t-[3.5rem] shadow-2xl">
-                        <button onClick={()=>setView('dashboard')} className={`p-2 transition-all ${view==='dashboard'?'tab-active':'text-gray-300'}`}><Icons.Smile /></button>
-                        <button onClick={()=>setView('expenses')} className={`p-2 transition-all ${view==='expenses'?'tab-active':'text-gray-300'}`}><Icons.Receipt /></button>
+                        <button onClick={()=>setView('dashboard')} className={`p-2 transition-all ${view==='dashboard'?'tab-active':'text-gray-300 hover:text-teal-400'}`}><Icons.Smile /></button>
+                        <button onClick={()=>setView('expenses')} className={`p-2 transition-all ${view==='expenses'?'tab-active':'text-gray-300 hover:text-teal-400'}`}><Icons.Receipt /></button>
                         <button onClick={()=>{setEditingExpense(null);setShowAddExpense(true);}} className="bg-rose-500 text-white p-6 rounded-full shadow-2xl shadow-rose-300 -mt-20 border-8 border-white active:scale-90 transition-all hover:bg-rose-700 hover:scale-110"><Icons.Plus /></button>
                         <button onClick={()=>setView('settle')} className={`p-2 transition-all ${view==='settle'?'tab-active':'text-gray-300'}`}><Icons.Sparkles /></button>
                         <button onClick={()=>setView('members')} className={`p-2 transition-all ${view==='members'?'tab-active':'text-gray-300'}`}><Icons.UsersIcon /></button>
@@ -448,16 +452,16 @@
                     {showAddMember && (
                         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[60] flex items-center justify-center p-10 animate-fade">
                             <div className="bg-white w-full rounded-[4rem] p-12 shadow-2xl border border-white/10">
-                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">Invite Partner</h3><button onClick={()=>setShowAddMember(false)} className="bg-gray-100 p-4 rounded-full active:scale-90 hover:bg-gray-200 transition-colors"><Icons.X/></button></div>
+                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">New Member</h3><button onClick={()=>setShowAddMember(false)} className="bg-gray-100 p-4 rounded-full active:scale-90 hover:bg-gray-200 transition-colors"><Icons.X/></button></div>
                                 <form onSubmit={async (e)=>{
                                     e.preventDefault(); 
                                     const {db,collection,addDoc}=window.BasuShareFirebase; 
                                     await addDoc(collection(db,'artifacts','basushare-app','public', 'data', `${groupId}-members`),{name:e.target.nm.value.trim(), createdAt: Date.now()}); 
                                     setShowAddMember(false);
-                                    showToast("Partner invited");
+                                    showToast("Member added");
                                 }} className="space-y-8">
-                                    <input name="nm" required placeholder="Name..." className="w-full bg-gray-50 border-none rounded-[2rem] p-7 text-xl font-bold focus:ring-4 focus:ring-teal-50 outline-none placeholder:text-gray-300" autoFocus />
-                                    <button className="w-full bg-teal-600 text-white py-6 rounded-[2.5rem] font-black text-[10px] uppercase tracking-widest shadow-2xl active:scale-95 shadow-teal-900/20 transition-all hover:bg-teal-700">Confirm Partner</button>
+                                    <input name="nm" required placeholder="Enter name..." className="w-full bg-gray-50 border-none rounded-[2rem] p-7 text-xl font-bold focus:ring-4 focus:ring-teal-50 outline-none placeholder:text-gray-300 shadow-inner" autoFocus />
+                                    <button className="w-full bg-teal-600 text-white py-6 rounded-[2.5rem] font-black text-[10px] uppercase tracking-widest shadow-2xl active:scale-95 shadow-teal-900/20 transition-all hover:bg-teal-700">Join Family Circle</button>
                                 </form>
                             </div>
                         </div>
@@ -466,14 +470,14 @@
                     {showAddExpense && (
                         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[60] flex items-end justify-center">
                             <div className="bg-white w-full max-w-md rounded-t-[4.5rem] p-12 max-h-[95vh] overflow-y-auto no-scrollbar shadow-2xl border-t border-white/50 animate-pop">
-                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">{editingExpense?'Modify bill':'Add bill'}</h3><button onClick={()=>{setShowAddExpense(false);setEditingExpense(null);}} className="bg-gray-100 p-4 rounded-full active:scale-90 hover:bg-gray-200 transition-colors"><Icons.X/></button></div>
+                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">{editingExpense?'Edit Record':'Add Entry'}</h3><button onClick={()=>{setShowAddExpense(false);setEditingExpense(null);}} className="bg-gray-100 p-4 rounded-full active:scale-90 hover:bg-gray-200 transition-colors"><Icons.X/></button></div>
                                 <AddExpenseContent 
                                     members={members} symbol={symbol} initialData={editingExpense}
                                     onSave={async (d)=>{
                                         const {db,collection,addDoc,updateDoc,doc}=window.BasuShareFirebase;
                                         if(editingExpense) {
                                             await updateDoc(doc(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`,editingExpense.id),{...d, updatedAt: Date.now()});
-                                            showToast("Record updated");
+                                            showToast("Record fixed");
                                         } else {
                                             await addDoc(collection(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`),{...d, createdAt: Date.now()});
                                             showToast("Bill recorded");
@@ -516,24 +520,24 @@
             return (
                 <div className="space-y-12 pb-10">
                     <div className="space-y-4">
-                        <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Dinner, movie, coffee..." className="text-4xl font-extrabold border-none w-full p-0 focus:ring-0 placeholder:text-gray-200 outline-none tracking-tighter" />
-                        <div className="flex items-center border-b-8 border-teal-50 pb-6"><input type="number" step="0.01" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00" className="text-8xl font-mono font-black border-none p-0 focus:ring-0 w-2/3 outline-none" /><span className="text-5xl text-gray-200 font-bold ml-4">{symbol}</span></div>
+                        <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="What was this for?" className="text-4xl font-extrabold border-none w-full p-0 focus:ring-0 placeholder:text-gray-200 outline-none tracking-tighter shadow-none bg-transparent" />
+                        <div className="flex items-center border-b-8 border-teal-50 pb-6"><input type="number" step="0.01" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00" className="text-8xl font-mono font-black border-none p-0 focus:ring-0 w-2/3 outline-none bg-transparent" /><span className="text-5xl text-gray-200 font-bold ml-4 shrink-0">{symbol}</span></div>
                     </div>
                     <div className="grid grid-cols-2 gap-8">
-                        <div className="space-y-3"><label className="text-[10px] font-black uppercase text-gray-400 block px-2 tracking-widest">Payer</label><select value={payer} onChange={e=>setPayer(e.target.value)} className="w-full bg-gray-50 border-none rounded-3xl font-extrabold py-5 px-6 outline-none appearance-none focus:ring-4 focus:ring-teal-50">{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
-                        <div className="space-y-3"><label className="text-[10px] font-black uppercase text-gray-400 block px-2 tracking-widest">Logic</label><select value={method} onChange={e=>setMethod(e.target.value)} className="w-full bg-rose-50 border-none rounded-3xl font-extrabold py-5 px-6 text-rose-500 outline-none appearance-none focus:ring-4 focus:ring-rose-50"><option value="equal">Equally</option><option value="parts">Weighting</option><option value="percentage">Percent Share</option><option value="actual">Exact Amt</option></select></div>
+                        <div className="space-y-3"><label className="text-[10px] font-black uppercase text-gray-400 block px-2 tracking-widest">Payer</label><select value={payer} onChange={e=>setPayer(e.target.value)} className="w-full bg-gray-50 border-none rounded-3xl font-extrabold py-5 px-6 outline-none appearance-none focus:ring-4 focus:ring-teal-50 shadow-inner">{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
+                        <div className="space-y-3"><label className="text-[10px] font-black uppercase text-gray-400 block px-2 tracking-widest">Split</label><select value={method} onChange={e=>setMethod(e.target.value)} className="w-full bg-rose-50 border-none rounded-3xl font-extrabold py-5 px-6 text-rose-500 outline-none appearance-none focus:ring-4 focus:ring-rose-50 shadow-inner"><option value="equal">Equally</option><option value="parts">Weighting</option><option value="percentage">Percent Share</option><option value="actual">Exact Amt</option></select></div>
                     </div>
                     <div className="bg-gray-50 p-10 rounded-[4rem] space-y-6 shadow-inner">
-                        <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.4em] text-center mb-4">Allocation Details</p>
+                        <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.4em] text-center mb-4">Breakdown</p>
                         {members.map(m => (
                             <div key={m.id} className="flex justify-between items-center bg-white p-5 rounded-3xl shadow-sm hover:shadow-md transition-shadow">
-                                <div className="flex items-center gap-4 overflow-hidden"><Avatar name={m.name} size="w-10 h-10"/><span className="font-bold text-gray-600 truncate max-w-[100px]">{m.name}</span></div>
+                                <div className="flex items-center gap-4 overflow-hidden shrink-0"><Avatar name={m.name} size="w-10 h-10"/><span className="font-bold text-gray-600 truncate max-w-[100px]">{m.name}</span></div>
                                 {method === 'equal' ? <span className="font-mono font-black text-teal-500 text-lg">{(parseFloat(amt || 0)/(members.length || 1)).toFixed(2)}{symbol}</span> :
-                                <input type="number" step="0.1" value={vals[m.id] || ''} onChange={e=>setVals({...vals, [m.id]: e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 w-32 text-right font-mono font-black text-teal-600 outline-none focus:ring-4 focus:ring-teal-50 shadow-inner" />}
+                                <input type="number" step="0.1" value={vals[m.id] || ''} onChange={e=>setVals({...vals, [m.id]: e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 w-32 text-right font-mono font-black text-teal-600 outline-none focus:ring-4 focus:ring-teal-50 shadow-inner text-lg" />}
                             </div>
                         ))}
                     </div>
-                    <button onClick={()=>onSave({description:desc, amount:amt, payerId:payer, splitMethod:method, splits:getSplits()})} className="w-full bg-teal-600 text-white py-8 rounded-[3.5rem] font-black text-[11px] uppercase tracking-[0.4em] shadow-2xl shadow-teal-900/10 active:scale-95 transition-all hover:bg-teal-700 shadow-teal-600/20 tracking-widest">Commit Entry</button>
+                    <button onClick={()=>onSave({description:desc, amount:amt, payerId:payer, splitMethod:method, splits:getSplits()})} className="w-full bg-teal-600 text-white py-8 rounded-[3.5rem] font-black text-[11px] uppercase tracking-[0.4em] shadow-2xl shadow-teal-900/10 active:scale-95 transition-all hover:bg-teal-700 shadow-teal-600/20 tracking-widest">Confirm Transaction</button>
                 </div>
             );
         };
