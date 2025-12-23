@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BasuShare - Sharing with Family</title>
+    <!-- Modern Styling and Fonts -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Outfit', sans-serif; background-color: #fffaf9; color: #4a3736; -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        @keyframes pop { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .animate-pop { animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); }
+        .tab-active { color: #f43f5e; transform: scale(1.2); transition: all 0.3s ease; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Firebase Real-Time Cloud Storage -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        window.BasuShareFirebase = { 
+            auth, db, signInAnonymously, signInWithCustomToken, 
+            onAuthStateChanged, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
+            ready: true
+        };
+        window.dispatchEvent(new Event('basushare-ready'));
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const Icons = {
+            Heart: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="text-rose-400"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>,
+            Home: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+            Plus: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>,
+            Smile: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>,
+            Receipt: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="M16 8H8"/><path d="M16 12H8"/><path d="M13 16H8"/></svg>,
+            Trash: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>,
+            Edit: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+            Share: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>,
+            ChevronRight: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>,
+            X: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
+            Globe: () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>,
+            UsersIcon: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M17 11a4 4 0 0 0-3-3.87"/></svg>,
+            Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/></svg>
+        };
+
+        const AVATAR_COLORS = ['bg-rose-200', 'bg-teal-200', 'bg-orange-200', 'bg-sky-200', 'bg-amber-200'];
+        const CURRENCIES = { EUR: '€', USD: '$', INR: '₹', HKD: 'HK$' };
+
+        const Avatar = ({ name, size = 'w-10 h-10' }) => {
+            const color = AVATAR_COLORS[name.length % AVATAR_COLORS.length];
+            return (
+                <div className={`${size} ${color} rounded-full flex items-center justify-center font-bold text-gray-700 uppercase tracking-tighter text-[10px]`}>
+                    {name.substring(0, 2)}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [isReady, setIsReady] = useState(!!window.BasuShareFirebase?.ready);
+            const [user, setUser] = useState(null);
+            const [members, setMembers] = useState([]);
+            const [expenses, setExpenses] = useState([]);
+            const [view, setView] = useState('home');
+            const [groupId, setGroupId] = useState(null);
+            const [currency, setCurrency] = useState('EUR');
+            const [showAddExpense, setShowAddExpense] = useState(false);
+            const [showAddMember, setShowAddMember] = useState(false);
+            const [editingExpense, setEditingExpense] = useState(null);
+            const [toast, setToast] = useState(null);
+            const [recentGroups, setRecentGroups] = useState(() => JSON.parse(localStorage.getItem('basu_recents') || '[]'));
+
+            // URL Hash Syncing for Group Navigation
+            useEffect(() => {
+                const handleHashSync = () => {
+                    const hash = decodeURIComponent(window.location.hash.replace('#', ''));
+                    if (hash) {
+                        setGroupId(hash);
+                        setView('dashboard');
+                        setRecentGroups(prev => {
+                            const next = [{ id: hash, last: Date.now() }, ...prev.filter(g => g.id !== hash)].slice(0, 15);
+                            localStorage.setItem('basu_recents', JSON.stringify(next));
+                            return next;
+                        });
+                    } else {
+                        setGroupId(null);
+                        setView('home');
+                    }
+                };
+                window.addEventListener('hashchange', handleHashSync);
+                handleHashSync();
+                
+                const handleFirebaseReady = () => setIsReady(true);
+                window.addEventListener('basushare-ready', handleFirebaseReady);
+
+                return () => {
+                    window.removeEventListener('hashchange', handleHashSync);
+                    window.removeEventListener('basushare-ready', handleFirebaseReady);
+                };
+            }, []);
+
+            useEffect(() => {
+                if (!isReady) return;
+                const { auth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = window.BasuShareFirebase;
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (e) { console.error("BasuShare Auth failed", e); }
+                };
+                initAuth();
+                const unsub = onAuthStateChanged(auth, setUser);
+                return () => unsub();
+            }, [isReady]);
+
+            useEffect(() => {
+                if (!isReady || !user || !groupId) return;
+                const { db, collection, onSnapshot } = window.BasuShareFirebase;
+                const mRef = collection(db, 'artifacts', 'basushare-app', 'public', 'data', `${groupId}-members`);
+                const eRef = collection(db, 'artifacts', 'basushare-app', 'public', 'data', `${groupId}-expenses`);
+                
+                const uM = onSnapshot(mRef, (s) => setMembers(s.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.error(err));
+                const uE = onSnapshot(eRef, (s) => setExpenses(s.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.error(err));
+                return () => { uM(); uE(); };
+            }, [isReady, user, groupId]);
+
+            const balances = useMemo(() => {
+                const bal = {};
+                members.forEach(m => bal[m.id] = 0);
+                expenses.forEach(e => {
+                    bal[e.payerId] = (bal[e.payerId] || 0) + parseFloat(e.amount);
+                    Object.entries(e.splits || {}).forEach(([mid, share]) => {
+                        bal[mid] = (bal[mid] || 0) - parseFloat(share);
+                    });
+                });
+                return bal;
+            }, [members, expenses]);
+
+            const settlements = useMemo(() => {
+                const net = Object.entries(balances).map(([id, amount]) => ({ id, amount: Math.round(amount * 100) / 100 }));
+                const creds = net.filter(b => b.amount > 0.01).sort((a,b) => b.amount - a.amount);
+                const debts = net.filter(b => b.amount < -0.01).sort((a,b) => a.amount - b.amount);
+                const res = [];
+                let i=0, j=0;
+                while(i < debts.length && j < creds.length) {
+                    const amt = Math.min(Math.abs(debts[i].amount), creds[j].amount);
+                    res.push({ from: debts[i].id, to: creds[j].id, amount: Math.round(amt * 100) / 100 });
+                    debts[i].amount += amt; creds[j].amount -= amt;
+                    if(Math.abs(debts[i].amount) < 0.01) i++;
+                    if(Math.abs(creds[j].amount) < 0.01) j++;
+                }
+                return res;
+            }, [balances]);
+
+            const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
+
+            const handleDeleteGroupShortcut = (e, id) => {
+                e.stopPropagation();
+                const next = recentGroups.filter(g => g.id !== id);
+                setRecentGroups(next);
+                localStorage.setItem('basu_recents', JSON.stringify(next));
+            };
+
+            const symbol = CURRENCIES[currency] || '€';
+
+            if (!isReady || !user) return <div className="h-screen bg-rose-50 flex items-center justify-center text-rose-400 font-bold animate-pulse uppercase tracking-[0.2em] text-xs">Waking up BasuShare...</div>;
+
+            // --- Home Workspace ---
+            if (view === 'home' || !groupId) return (
+                <div className="flex flex-col h-screen max-w-md mx-auto bg-white animate-pop overflow-hidden">
+                    <header className="p-10 pt-16 text-center shrink-0">
+                        <div className="flex justify-center mb-4 scale-125"><Icons.Heart /></div>
+                        <h1 className="text-4xl font-extrabold tracking-tight text-gray-800">BasuShare</h1>
+                        <p className="text-gray-400 font-medium mt-1">Sharing expenses with family</p>
+                    </header>
+                    <main className="flex-1 p-6 space-y-10 overflow-y-auto no-scrollbar pb-24">
+                        <section className="bg-gradient-to-br from-rose-400 to-rose-500 p-8 rounded-[3rem] shadow-xl text-white relative">
+                            <h2 className="text-xl font-bold mb-1">New shared space?</h2>
+                            <p className="text-rose-50 text-sm mb-6 opacity-80">Dinner, rent, trips, or gifts.</p>
+                            <form onSubmit={(e) => { e.preventDefault(); window.location.hash = encodeURIComponent(e.target.gid.value); e.target.reset(); }} className="space-y-4">
+                                <input name="gid" required placeholder="Name your group..." className="w-full bg-white/20 border-none rounded-2xl p-5 text-white placeholder:text-white/50 focus:ring-2 focus:ring-white outline-none font-bold text-lg" />
+                                <button className="w-full bg-white text-rose-500 py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest active:scale-95 shadow-lg">Start circle</button>
+                            </form>
+                        </section>
+                        <section className="space-y-6">
+                            <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest px-4">Your circles</h3>
+                            <div className="grid grid-cols-1 gap-4">
+                                {recentGroups.map(g => (
+                                    <div key={g.id} onClick={() => window.location.hash = encodeURIComponent(g.id)} className="w-full bg-white border-2 border-gray-50 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm hover:border-rose-100 transition-all active:scale-[0.98] cursor-pointer group">
+                                        <div><p className="font-extrabold text-gray-800 text-xl tracking-tight group-hover:text-rose-500">{g.id}</p><p className="text-[9px] text-gray-400 font-bold uppercase mt-1">Open workspace</p></div>
+                                        <button onClick={(e) => handleDeleteGroupShortcut(e, g.id)} className="p-3 text-gray-300 hover:text-rose-500 active:scale-90 transition-all"><Icons.Trash /></button>
+                                    </div>
+                                ))}
+                                {recentGroups.length === 0 && <p className="text-center text-xs text-gray-300 italic py-10">No circles yet. Create one above!</p>}
+                            </div>
+                        </section>
+                    </main>
+                </div>
+            );
+
+            // --- Dashboard View ---
+            return (
+                <div className="flex flex-col h-screen max-w-md mx-auto bg-white shadow-2xl relative overflow-hidden animate-pop">
+                    {toast && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full text-xs font-bold shadow-xl">{toast}</div>}
+                    <header className="bg-teal-500 p-6 pb-20 text-white rounded-b-[3rem] relative shadow-lg">
+                        <div className="flex justify-between items-center mb-6 px-2">
+                            <button onClick={() => window.location.hash = ''} className="p-2 hover:bg-white/10 rounded-full active:scale-90 transition-all"><Icons.Home /></button>
+                            <h1 className="text-xl font-extrabold uppercase tracking-tight truncate max-w-[200px]">{groupId}</h1>
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => { 
+                                    navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#${groupId}`);
+                                    showToast("Link copied!");
+                                }} className="p-2 bg-white/10 rounded-full active:scale-90"><Icons.Share /></button>
+                                <div className="bg-white/10 rounded-lg px-2 py-1 flex items-center border border-white/5">
+                                    <Icons.Globe />
+                                    <select value={currency} onChange={e => setCurrency(e.target.value)} className="bg-transparent border-none text-[10px] font-black appearance-none cursor-pointer focus:ring-0">
+                                        {Object.keys(CURRENCIES).map(c => <option key={c} value={c} className="text-black">{c}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-teal-100 text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">Total spent</p>
+                            <p className="text-5xl font-black tracking-tighter">{expenses.reduce((s,e)=>s+parseFloat(e.amount),0).toFixed(2)}{symbol}</p>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 overflow-y-auto p-6 -mt-10 pb-28 no-scrollbar space-y-8 relative z-10">
+                        {view === 'dashboard' && (
+                            <>
+                                <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-teal-50 space-y-6">
+                                    <h2 className="text-[10px] font-black text-gray-300 uppercase tracking-widest text-center">Status</h2>
+                                    {members.length === 0 && <p className="text-center text-xs text-gray-300 italic">Add family members to see balances!</p>}
+                                    {members.map(m => (
+                                        <div key={m.id} className="flex justify-between items-center">
+                                            <div className="flex items-center gap-3"><Avatar name={m.name} /><span className="font-bold text-gray-700">{m.name}</span></div>
+                                            <span className={`font-mono font-black text-xl ${balances[m.id]>=0 ? 'text-teal-500' : 'text-orange-500'}`}>{balances[m.id]>=0?'+':''}{balances[m.id].toFixed(2)}{symbol}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center px-4">
+                                        <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest">Recent Activity</h3>
+                                        <button onClick={() => setView('expenses')} className="text-teal-500 text-xs font-bold uppercase tracking-widest">See all</button>
+                                    </div>
+                                    {expenses.length === 0 && <p className="text-center py-6 text-xs text-gray-300 italic">No activity yet.</p>}
+                                    {expenses.slice(-3).reverse().map(e => (
+                                        <div key={e.id} className={`p-6 rounded-[2rem] border border-gray-100 flex justify-between items-center shadow-sm ${e.isSettlement?'bg-rose-50/50 border-rose-100':'bg-white'}`}>
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center text-gray-400">
+                                                    {e.isSettlement ? <Icons.Sparkles /> : <Icons.Receipt />}
+                                                </div>
+                                                <div>
+                                                    <p className={`font-bold text-sm ${e.isSettlement?'text-rose-600 italic':'text-gray-800'}`}>{e.description}</p>
+                                                    <p className="text-[9px] text-teal-500 font-bold uppercase mt-1 tracking-tight">{members.find(m=>m.id===e.payerId)?.name} paid</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <p className="font-mono font-black text-gray-800 text-lg">{parseFloat(e.amount).toFixed(2)}{symbol}</p>
+                                                <button onClick={()=>{setEditingExpense(e);setShowAddExpense(true);}} className="text-gray-300 hover:text-teal-500 p-1"><Icons.Edit /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+
+                        {view === 'expenses' && (
+                            <div className="space-y-4 animate-pop">
+                                {expenses.map(e => (
+                                    <div key={e.id} className={`p-8 rounded-[3rem] border border-gray-100 shadow-sm relative ${e.isSettlement ? 'bg-rose-50 border-rose-100' : 'bg-white'}`}>
+                                        <div className="flex justify-between items-start mb-6">
+                                            <div className="flex items-center gap-4">
+                                                <Avatar name={members.find(m=>m.id===e.payerId)?.name || '??'} size="w-14 h-14" />
+                                                <div>
+                                                    <h3 className={`font-extrabold text-2xl tracking-tighter leading-none ${e.isSettlement?'text-rose-600':'text-gray-800'}`}>{e.description}</h3>
+                                                    <p className="text-[10px] text-teal-600 font-black uppercase mt-2 tracking-widest">{members.find(m=>m.id===e.payerId)?.name} paid {parseFloat(e.amount).toFixed(2)}{symbol}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-1 bg-white/50 backdrop-blur p-1 rounded-full shadow-sm">
+                                                <button onClick={()=>{setEditingExpense(e);setShowAddExpense(true);}} className="p-2 text-gray-400 hover:text-teal-500"><Icons.Edit /></button>
+                                                <button onClick={async ()=>{
+                                                    const {db,doc,deleteDoc}=window.BasuShareFirebase; 
+                                                    await deleteDoc(doc(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`, e.id));
+                                                }} className="p-2 text-gray-400 hover:text-rose-500"><Icons.Trash /></button>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4 pt-6 border-t border-dashed border-gray-100">
+                                            {Object.entries(e.splits || {}).map(([mid,amt])=>(<div key={mid} className="flex justify-between bg-gray-50/50 p-3 rounded-2xl text-[10px] font-black"><span className="text-gray-400 truncate mr-2">{members.find(m=>m.id===mid)?.name}</span><span className="text-gray-700">{parseFloat(amt).toFixed(2)}{symbol}</span></div>))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {view === 'settle' && (
+                            <div className="space-y-6 animate-pop">
+                                {settlements.length === 0 ? <div className="text-center py-24 bg-rose-50 rounded-[4rem] border-2 border-dashed border-rose-100"><p className="font-extrabold text-rose-800 text-2xl tracking-tight">Everything is settled!</p></div> :
+                                settlements.map((s,i) => (
+                                    <div key={i} className="bg-gray-900 p-8 rounded-[3.5rem] text-white shadow-2xl space-y-8">
+                                        <div className="flex justify-between items-center text-center px-2">
+                                            <div className="flex-1 overflow-hidden"><Avatar name={members.find(m=>m.id===s.from)?.name} size="w-16 h-16 mx-auto mb-3" /><p className="font-extrabold text-sm text-rose-300 truncate">{members.find(m=>m.id===s.from)?.name}</p></div>
+                                            <div className="px-6 text-center shrink-0 border-x border-white/5"><p className="text-3xl font-mono font-black text-teal-400">{s.amount.toFixed(2)}{symbol}</p><div className="text-white/20 mt-1"><Icons.ChevronRight /></div></div>
+                                            <div className="flex-1 overflow-hidden"><Avatar name={members.find(m=>m.id===s.to)?.name} size="w-16 h-16 mx-auto mb-3" /><p className="font-extrabold text-sm text-teal-300 truncate">{members.find(m=>m.id===s.to)?.name}</p></div>
+                                        </div>
+                                        <button onClick={async ()=>{
+                                            const { db, collection, addDoc } = window.BasuShareFirebase;
+                                            await addDoc(collection(db, 'artifacts', 'basushare-app', 'public', 'data', `${groupId}-expenses`), {
+                                                description: `Settled up with ${members.find(m => m.id === s.to)?.name}`,
+                                                amount: s.amount.toString(),
+                                                payerId: s.from,
+                                                splitMethod: 'actual',
+                                                splits: { [s.to]: s.amount.toString() },
+                                                isSettlement: true,
+                                                createdAt: Date.now()
+                                            });
+                                            showToast("Settled! 🎉");
+                                        }} className="w-full bg-white text-gray-900 py-6 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">Mark as paid</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {view === 'members' && (
+                            <div className="space-y-10 animate-pop">
+                                <div className="space-y-6">
+                                    <div className="flex justify-between items-center px-4"><h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em]">Circle members</h3><button onClick={()=>setShowAddMember(true)} className="bg-teal-600 text-white text-[10px] font-black px-6 py-2 rounded-full uppercase active:scale-95 shadow-lg">+ Add family</button></div>
+                                    {members.map(m=>(
+                                        <div key={m.id} className="bg-white border border-gray-100 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm">
+                                            <div className="flex items-center gap-4"><Avatar name={m.name} size="w-12 h-12" /><span className="font-extrabold text-gray-800 text-lg tracking-tight">{m.name}</span></div>
+                                            <div className="w-10 h-10 rounded-full bg-teal-50 text-teal-400 flex items-center justify-center font-bold shadow-inner">✓</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass border-t border-white/50 p-8 flex justify-between items-center z-40 rounded-t-[3.5rem] shadow-2xl">
+                        <button onClick={()=>setView('dashboard')} className={`p-2 transition-all ${view==='dashboard'?'tab-active':'text-gray-300'}`}><Icons.Smile /></button>
+                        <button onClick={()=>setView('expenses')} className={`p-2 transition-all ${view==='expenses'?'tab-active':'text-gray-300'}`}><Icons.Receipt /></button>
+                        <button onClick={()=>{setEditingExpense(null);setShowAddExpense(true);}} className="bg-rose-500 text-white p-6 rounded-full shadow-2xl shadow-rose-300 -mt-20 border-8 border-white active:scale-90 transition-all hover:bg-rose-700"><Icons.Plus /></button>
+                        <button onClick={()=>setView('settle')} className={`p-2 transition-all ${view==='settle'?'tab-active':'text-gray-300'}`}><Icons.Sparkles /></button>
+                        <button onClick={()=>setView('members')} className={`p-2 transition-all ${view==='members'?'tab-active':'text-gray-300'}`}><Icons.UsersIcon /></button>
+                    </nav>
+
+                    {showAddMember && (
+                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[60] flex items-center justify-center p-10 animate-fade">
+                            <div className="bg-white w-full rounded-[4rem] p-12 shadow-2xl">
+                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter">New member</h3><button onClick={()=>setShowAddMember(false)} className="bg-gray-100 p-4 rounded-full active:scale-90"><Icons.X/></button></div>
+                                <form onSubmit={async (e)=>{
+                                    e.preventDefault(); 
+                                    const {db,collection,addDoc}=window.BasuShareFirebase; 
+                                    await addDoc(collection(db,'artifacts','basushare-app','public', 'data', `${groupId}-members`),{name:e.target.nm.value, createdAt:Date.now()}); 
+                                    setShowAddMember(false);
+                                }} className="space-y-8">
+                                    <input name="nm" required placeholder="Member name..." className="w-full bg-gray-50 border-none rounded-[2rem] p-6 text-xl font-bold focus:ring-2 focus:ring-teal-100 outline-none placeholder:text-gray-300" autoFocus />
+                                    <button className="w-full bg-teal-600 text-white py-6 rounded-[2.5rem] font-black text-[10px] uppercase tracking-widest shadow-2xl active:scale-95 shadow-teal-900/20">Add to circle</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {showAddExpense && (
+                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[60] flex items-end justify-center">
+                            <div className="bg-white w-full max-w-md rounded-t-[4.5rem] p-12 max-h-[95vh] overflow-y-auto no-scrollbar shadow-2xl border-t border-white/50 animate-pop">
+                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">{editingExpense?'Fix bill':'Add bill'}</h3><button onClick={()=>{setShowAddExpense(false);setEditingExpense(null);}} className="bg-gray-100 p-4 rounded-full active:scale-90"><Icons.X/></button></div>
+                                <AddExpenseContent 
+                                    members={members} symbol={symbol} initialData={editingExpense}
+                                    onSave={async (d)=>{
+                                        const {db,collection,addDoc,updateDoc,doc}=window.BasuShareFirebase;
+                                        if(editingExpense) {
+                                            await updateDoc(doc(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`,editingExpense.id),{...d, updatedAt: Date.now()});
+                                        } else {
+                                            await addDoc(collection(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`),{...d, createdAt: Date.now()});
+                                        }
+                                        setShowAddExpense(false); setEditingExpense(null);
+                                    }} 
+                                />
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const AddExpenseContent = ({ members, symbol, onSave, initialData }) => {
+            const [desc, setDesc] = useState(initialData?.description || '');
+            const [amt, setAmt] = useState(initialData?.amount || '');
+            const [payer, setPayer] = useState(initialData?.payerId || members[0]?.id || '');
+            const [method, setMethod] = useState(initialData?.splitMethod || 'equal');
+            const [vals, setVals] = useState({});
+
+            useEffect(() => {
+                const init = {};
+                members.forEach(m => {
+                    if (initialData && method === initialData.splitMethod) init[m.id] = (method === 'actual' || method === 'percentage') ? initialData.splits[m.id] : 1;
+                    else init[m.id] = (method === 'percentage' ? (100/(members.length || 1)).toFixed(1) : 1);
+                });
+                setVals(init);
+            }, [method, members, initialData]);
+
+            const getFinalSplits = () => {
+                const total = parseFloat(amt) || 0;
+                const out = {};
+                if (method === 'equal') members.forEach(m => out[m.id] = (total / (members.length || 1)).toFixed(2));
+                else if (method === 'parts') {
+                    const sum = Object.values(vals).reduce((a,b)=>a+parseFloat(b), 0);
+                    members.forEach(m => out[m.id] = (total * (parseFloat(vals[m.id]) / (sum || 1))).toFixed(2));
+                } else if (method === 'percentage') members.forEach(m => out[m.id] = (total * (parseFloat(vals[m.id]) / 100)).toFixed(2));
+                else members.forEach(m => out[m.id] = (parseFloat(vals[m.id]) || 0).toFixed(2));
+                return out;
+            };
+
+            return (
+                <div className="space-y-12 pb-10">
+                    <div className="space-y-4">
+                        <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Dinner, Cinema, Coffee..." className="text-4xl font-extrabold border-none w-full p-0 focus:ring-0 placeholder:text-gray-200 outline-none tracking-tighter" />
+                        <div className="flex items-center border-b-8 border-teal-50 pb-6"><input type="number" step="0.01" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00" className="text-8xl font-mono font-black border-none p-0 focus:ring-0 w-2/3 outline-none tracking-tighter" /><span className="text-5xl text-gray-200 font-bold ml-4">{symbol}</span></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-8">
+                        <div className="space-y-3"><label className="text-[10px] font-black uppercase tracking-widest text-gray-400 block px-2">Who paid?</label><select value={payer} onChange={e=>setPayer(e.target.value)} className="w-full bg-gray-50 border-none rounded-3xl font-extrabold py-5 px-6 outline-none focus:ring-2 focus:ring-teal-100 appearance-none">{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
+                        <div className="space-y-3"><label className="text-[10px] font-black uppercase tracking-widest text-gray-400 block px-2">How to split?</label><select value={method} onChange={e=>setMethod(e.target.value)} className="w-full bg-rose-50 border-none rounded-3xl font-extrabold py-5 px-6 text-rose-500 outline-none focus:ring-2 focus:ring-rose-200 appearance-none"><option value="equal">Equally</option><option value="parts">Weighting</option><option value="percentage">Percent Share</option><option value="actual">Exact Amounts</option></select></div>
+                    </div>
+                    <div className="bg-gray-50 p-10 rounded-[3.5rem] space-y-6 shadow-inner">
+                        <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.4em] text-center mb-4 px-1">Internal Distribution</p>
+                        {members.map(m => (
+                            <div key={m.id} className="flex justify-between items-center bg-white p-5 rounded-[2rem] shadow-sm">
+                                <div className="flex items-center gap-3"><Avatar name={m.name} size="w-10 h-10" /><span className="font-extrabold text-gray-600 text-sm tracking-tight">{m.name}</span></div>
+                                {method === 'equal' ? <span className="font-mono font-black text-teal-500 text-lg whitespace-nowrap">{(parseFloat(amt)/(members.length || 1)).toFixed(2)}{symbol}</span> :
+                                <input type="number" step="0.1" value={vals[m.id] || ''} onChange={e=>setVals({...vals, [m.id]: e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 w-32 text-right font-mono font-black text-teal-600 outline-none focus:ring-2 focus:ring-teal-200 text-lg" />}
+                            </div>
+                        ))}
+                    </div>
+                    <button onClick={()=>onSave({description:desc, amount:amt, payerId:payer, splitMethod:method, splits:getFinalSplits()})} className="w-full bg-teal-600 text-white py-8 rounded-[3.5rem] font-black text-[11px] uppercase tracking-[0.3em] shadow-2xl shadow-teal-900/20 active:scale-95 hover:bg-teal-700 transition-all">Submit to circle</button>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
