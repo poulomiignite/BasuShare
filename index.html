@@ -29,21 +29,27 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        try {
-            const firebaseConfig = JSON.parse(__firebase_config);
-            const app = initializeApp(firebaseConfig);
-            const auth = getAuth(app);
-            const db = getFirestore(app);
-            
-            window.BasuShareFirebase = { 
-                auth, db, signInAnonymously, signInWithCustomToken, 
-                onAuthStateChanged, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
-                ready: true
-            };
-            window.dispatchEvent(new Event('basushare-ready'));
-        } catch (e) { 
-            console.error("BasuShare Firebase Init Error:", e); 
-        }
+        const initFirebase = async () => {
+            try {
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                
+                window.BasuShareFirebase = { 
+                    auth, db, signInAnonymously, signInWithCustomToken, 
+                    onAuthStateChanged, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot,
+                    ready: true
+                };
+                window.dispatchEvent(new Event('basushare-ready'));
+            } catch (e) { 
+                console.error("BasuShare Firebase Init Error:", e);
+                // Even on error, set ready so the UI can show an error state instead of hanging
+                window.BasuShareFirebase = { ready: true, error: e.message };
+                window.dispatchEvent(new Event('basushare-ready'));
+            }
+        };
+        initFirebase();
     </script>
 
     <script type="text/babel">
@@ -62,6 +68,7 @@
             X: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>,
             Globe: () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>,
             UsersIcon: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M17 11a4 4 0 0 0-3-3.87"/></svg>,
+            Check: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
             Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3 1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z"/></svg>
         };
 
@@ -71,9 +78,9 @@
         const Avatar = ({ name, size = 'w-10 h-10', active = false }) => {
             const color = AVATAR_COLORS[name.length % AVATAR_COLORS.length];
             return (
-                <div className={`${size} ${color} rounded-full flex items-center justify-center font-bold text-gray-700 uppercase tracking-tighter text-[10px] relative transition-transform ${active ? 'scale-110 ring-2 ring-rose-400' : ''}`}>
+                <div className={`${size} ${color} rounded-full flex items-center justify-center font-bold text-gray-700 uppercase tracking-tighter text-[10px] relative transition-all ${active ? 'scale-110 ring-4 ring-rose-100' : ''}`}>
                     {name.substring(0, 2)}
-                    {active && <div className="absolute -bottom-1 -right-1 bg-rose-400 text-white rounded-full p-0.5"><Icons.Check size={8} /></div>}
+                    {active && <div className="absolute -bottom-1 -right-1 bg-rose-500 text-white rounded-full p-0.5 shadow-sm"><Icons.Check /></div>}
                 </div>
             );
         };
@@ -91,15 +98,29 @@
             const [editingExpense, setEditingExpense] = useState(null);
             const [toast, setToast] = useState(null);
             const [recentGroups, setRecentGroups] = useState(() => JSON.parse(localStorage.getItem('basu_recents') || '[]'));
-            
-            // Personal identity state
             const [currentMemberId, setCurrentMemberId] = useState(() => localStorage.getItem('basu_identity'));
 
+            // Robust initialization listener
             useEffect(() => {
-                if (currentMemberId) localStorage.setItem('basu_identity', currentMemberId);
-            }, [currentMemberId]);
+                const checkReady = () => {
+                    if (window.BasuShareFirebase?.ready) {
+                        setIsReady(true);
+                        return true;
+                    }
+                    return false;
+                };
 
-            // URL Hash Syncing for Group Navigation
+                if (!checkReady()) {
+                    window.addEventListener('basushare-ready', checkReady);
+                    const poll = setInterval(() => { if (checkReady()) clearInterval(poll); }, 500);
+                    return () => {
+                        window.removeEventListener('basushare-ready', checkReady);
+                        clearInterval(poll);
+                    };
+                }
+            }, []);
+
+            // URL Hash Syncing
             useEffect(() => {
                 const handleHashSync = () => {
                     const hash = decodeURIComponent(window.location.hash.replace('#', ''));
@@ -118,14 +139,7 @@
                 };
                 window.addEventListener('hashchange', handleHashSync);
                 handleHashSync();
-                
-                const handleFirebaseReady = () => setIsReady(true);
-                window.addEventListener('basushare-ready', handleFirebaseReady);
-
-                return () => {
-                    window.removeEventListener('hashchange', handleHashSync);
-                    window.removeEventListener('basushare-ready', handleFirebaseReady);
-                };
+                return () => window.removeEventListener('hashchange', handleHashSync);
             }, []);
 
             useEffect(() => {
@@ -135,7 +149,7 @@
                     try {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
                         else await signInAnonymously(auth);
-                    } catch (e) { console.error("BasuShare Auth failed", e); }
+                    } catch (e) { console.error("Auth failed", e); }
                 };
                 initAuth();
                 const unsub = onAuthStateChanged(auth, setUser);
@@ -145,13 +159,19 @@
             useEffect(() => {
                 if (!isReady || !user || !groupId) return;
                 const { db, collection, onSnapshot } = window.BasuShareFirebase;
+                // Specific collections for each group to keep data clean and separate
                 const mRef = collection(db, 'artifacts', 'basushare-app', 'public', 'data', `${groupId}-members`);
                 const eRef = collection(db, 'artifacts', 'basushare-app', 'public', 'data', `${groupId}-expenses`);
                 
-                const uM = onSnapshot(mRef, (s) => setMembers(s.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.error(err));
-                const uE = onSnapshot(eRef, (s) => setExpenses(s.docs.map(d => ({id: d.id, ...d.data()}))), (err) => console.error(err));
+                const uM = onSnapshot(mRef, (s) => setMembers(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                const uE = onSnapshot(eRef, (s) => setExpenses(s.docs.map(d => ({id: d.id, ...d.data()}))));
                 return () => { uM(); uE(); };
             }, [isReady, user, groupId]);
+
+            useEffect(() => {
+                if (currentMemberId) localStorage.setItem('basu_identity', currentMemberId);
+                else localStorage.removeItem('basu_identity');
+            }, [currentMemberId]);
 
             const balances = useMemo(() => {
                 const bal = {};
@@ -171,7 +191,6 @@
                 const debts = net.filter(b => b.amount < -0.01).sort((a,b) => a.amount - b.amount);
                 const res = [];
                 let i=0, j=0;
-                // Deep copy so we don't mutate original objects
                 const c_creds = JSON.parse(JSON.stringify(creds));
                 const d_debts = JSON.parse(JSON.stringify(debts));
 
@@ -185,7 +204,6 @@
                 return res;
             }, [balances]);
 
-            // Personalized view derived data
             const personalSummary = useMemo(() => {
                 if (!currentMemberId) return null;
                 const owedToMe = settlements.filter(s => s.to === currentMemberId).reduce((acc, s) => acc + s.amount, 0);
@@ -194,17 +212,17 @@
             }, [settlements, currentMemberId]);
 
             const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
-
-            const handleDeleteGroupShortcut = (e, id) => {
-                e.stopPropagation();
-                const next = recentGroups.filter(g => g.id !== id);
-                setRecentGroups(next);
-                localStorage.setItem('basu_recents', JSON.stringify(next));
-            };
-
             const symbol = CURRENCIES[currency] || '€';
 
-            if (!isReady || !user) return <div className="h-screen bg-rose-50 flex items-center justify-center text-rose-400 font-bold animate-pulse uppercase tracking-[0.2em] text-xs">Waking up BasuShare...</div>;
+            if (!isReady || !user) return (
+                <div className="h-screen bg-rose-50 flex flex-col items-center justify-center text-rose-500 gap-6">
+                    <div className="animate-bounce scale-150"><Icons.Heart /></div>
+                    <div className="text-center space-y-2">
+                        <p className="font-black tracking-[0.2em] uppercase text-xs">Waking up BasuShare...</p>
+                        <p className="text-[10px] opacity-50 font-bold">Checking secure family cloud</p>
+                    </div>
+                </div>
+            );
 
             // --- Home Workspace ---
             if (view === 'home' || !groupId) return (
@@ -217,7 +235,7 @@
                     <main className="flex-1 p-6 space-y-10 overflow-y-auto no-scrollbar pb-24">
                         <section className="bg-gradient-to-br from-rose-400 to-rose-500 p-8 rounded-[3rem] shadow-xl text-white relative">
                             <h2 className="text-xl font-bold mb-1">New shared space?</h2>
-                            <p className="text-rose-50 text-sm mb-6 opacity-80">Dinner, rent, trips, or gifts.</p>
+                            <p className="text-rose-50 text-sm mb-6 opacity-80 italic">Dinner, rent, trips, or gifts.</p>
                             <form onSubmit={(e) => { e.preventDefault(); window.location.hash = encodeURIComponent(e.target.gid.value); e.target.reset(); }} className="space-y-4">
                                 <input name="gid" required placeholder="Name your group..." className="w-full bg-white/20 border-none rounded-2xl p-5 text-white placeholder:text-white/50 focus:ring-2 focus:ring-white outline-none font-bold text-lg" />
                                 <button className="w-full bg-white text-rose-500 py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest active:scale-95 shadow-lg">Start circle</button>
@@ -228,8 +246,8 @@
                             <div className="grid grid-cols-1 gap-4">
                                 {recentGroups.map(g => (
                                     <div key={g.id} onClick={() => window.location.hash = encodeURIComponent(g.id)} className="w-full bg-white border-2 border-gray-50 p-6 rounded-[2.5rem] flex justify-between items-center shadow-sm hover:border-rose-100 transition-all active:scale-[0.98] cursor-pointer group">
-                                        <div><p className="font-extrabold text-gray-800 text-xl tracking-tight group-hover:text-rose-500">{g.id}</p><p className="text-[9px] text-gray-400 font-bold uppercase mt-1">Open workspace</p></div>
-                                        <button onClick={(e) => handleDeleteGroupShortcut(e, g.id)} className="p-3 text-gray-300 hover:text-rose-500 active:scale-90 transition-all"><Icons.Trash /></button>
+                                        <div><p className="font-extrabold text-gray-800 text-xl tracking-tight group-hover:text-rose-500">{g.id}</p><p className="text-[9px] text-gray-400 font-bold uppercase mt-1 tracking-widest">Tap to enter</p></div>
+                                        <button onClick={(e) => { e.stopPropagation(); const next = recentGroups.filter(x => x.id !== g.id); setRecentGroups(next); localStorage.setItem('basu_recents', JSON.stringify(next)); }} className="p-3 text-gray-300 hover:text-rose-500 transition-all"><Icons.Trash /></button>
                                     </div>
                                 ))}
                                 {recentGroups.length === 0 && <p className="text-center text-xs text-gray-300 italic py-10">No circles yet. Create one above!</p>}
@@ -246,7 +264,7 @@
                     <header className="bg-teal-500 p-6 pb-20 text-white rounded-b-[3rem] relative shadow-lg">
                         <div className="flex justify-between items-center mb-6 px-2">
                             <button onClick={() => window.location.hash = ''} className="p-2 hover:bg-white/10 rounded-full active:scale-90 transition-all"><Icons.Home /></button>
-                            <h1 className="text-xl font-extrabold uppercase tracking-tight truncate max-w-[200px]">{groupId}</h1>
+                            <h1 className="text-xl font-extrabold uppercase tracking-tight truncate max-w-[150px]">{groupId}</h1>
                             <div className="flex items-center gap-2">
                                 <button onClick={() => { 
                                     navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#${groupId}`);
@@ -261,7 +279,7 @@
                             </div>
                         </div>
                         <div className="text-center">
-                            <p className="text-teal-100 text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">Total spent</p>
+                            <p className="text-teal-100 text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">Total Group Spend</p>
                             <p className="text-5xl font-black tracking-tighter">{expenses.reduce((s,e)=>s+parseFloat(e.amount),0).toFixed(2)}{symbol}</p>
                         </div>
                     </header>
@@ -270,38 +288,38 @@
                         {view === 'dashboard' && (
                             <>
                                 {personalSummary && currentMemberId && (
-                                    <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-[2.5rem] p-8 shadow-xl text-white animate-pop">
+                                    <div className="bg-gray-900 rounded-[2.5rem] p-8 shadow-xl text-white animate-pop">
                                         <div className="flex items-center justify-between mb-4">
-                                            <p className="text-xs font-black uppercase tracking-widest opacity-60">Your Balance</p>
-                                            <p className="text-[10px] font-bold text-teal-400 bg-white/5 px-3 py-1 rounded-full uppercase">Hi, {members.find(m => m.id === currentMemberId)?.name}!</p>
+                                            <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Your Personal Ledger</p>
+                                            <p className="text-[9px] font-bold text-teal-400 bg-teal-400/10 px-3 py-1 rounded-full uppercase">Current: {members.find(m => m.id === currentMemberId)?.name}</p>
                                         </div>
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-white/5 rounded-3xl p-4 border border-white/5">
-                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1">Owed to you</p>
+                                            <div className="bg-white/5 rounded-3xl p-5 border border-white/5">
+                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 text-teal-400">Owed to you</p>
                                                 <p className="text-2xl font-mono font-black text-teal-400">{personalSummary.owedToMe.toFixed(2)}{symbol}</p>
                                             </div>
-                                            <div className="bg-white/5 rounded-3xl p-4 border border-white/5">
-                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1">You owe</p>
+                                            <div className="bg-white/5 rounded-3xl p-5 border border-white/5">
+                                                <p className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1 text-rose-400">You owe</p>
                                                 <p className="text-2xl font-mono font-black text-rose-400">{personalSummary.iOwe.toFixed(2)}{symbol}</p>
                                             </div>
                                         </div>
-                                        <button onClick={() => setCurrentMemberId(null)} className="w-full mt-4 text-[9px] font-black uppercase tracking-[0.2em] opacity-40 hover:opacity-100 transition-opacity">Change identity</button>
+                                        <button onClick={() => setCurrentMemberId(null)} className="w-full mt-5 text-[9px] font-black uppercase tracking-[0.3em] text-white/30 hover:text-white transition-colors">Switch Profile</button>
                                     </div>
                                 )}
 
                                 <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-teal-50 space-y-6">
                                     <h2 className="text-[10px] font-black text-gray-300 uppercase tracking-widest text-center">
-                                        {!currentMemberId ? "Who are you? (Tap to select)" : "Family Status"}
+                                        {!currentMemberId ? "Who are you? (Tap to select)" : "Group Distribution"}
                                     </h2>
                                     <div className="space-y-4">
-                                        {members.length === 0 && <p className="text-center text-xs text-gray-300 italic">Add family members to see balances!</p>}
+                                        {members.length === 0 && <p className="text-center text-xs text-gray-300 italic">Invite members to see balances!</p>}
                                         {members.map(m => (
                                             <div key={m.id} 
                                                  onClick={() => setCurrentMemberId(m.id)}
-                                                 className={`flex justify-between items-center p-3 rounded-3xl transition-all cursor-pointer ${currentMemberId === m.id ? 'bg-rose-50 shadow-inner' : 'hover:bg-gray-50'}`}>
+                                                 className={`flex justify-between items-center p-4 rounded-[1.5rem] transition-all cursor-pointer ${currentMemberId === m.id ? 'bg-rose-50 ring-2 ring-rose-100' : 'hover:bg-gray-50'}`}>
                                                 <div className="flex items-center gap-3">
                                                     <Avatar name={m.name} active={currentMemberId === m.id} />
-                                                    <span className={`font-bold tracking-tight ${currentMemberId === m.id ? 'text-rose-500' : 'text-gray-700'}`}>{m.name}</span>
+                                                    <span className={`font-bold tracking-tight text-sm ${currentMemberId === m.id ? 'text-rose-600' : 'text-gray-700'}`}>{m.name}</span>
                                                 </div>
                                                 <span className={`font-mono font-black text-xl ${balances[m.id]>=0 ? 'text-teal-500' : 'text-orange-500'}`}>{balances[m.id]>=0?'+':''}{balances[m.id].toFixed(2)}{symbol}</span>
                                             </div>
@@ -311,9 +329,9 @@
                                 <div className="space-y-4">
                                     <div className="flex justify-between items-center px-4">
                                         <h3 className="text-xs font-black text-gray-300 uppercase tracking-widest">Recent Activity</h3>
-                                        <button onClick={() => setView('expenses')} className="text-teal-500 text-xs font-bold uppercase tracking-widest">See all</button>
+                                        <button onClick={() => setView('expenses')} className="text-teal-500 text-[10px] font-black uppercase tracking-widest">See all</button>
                                     </div>
-                                    {expenses.length === 0 && <p className="text-center py-6 text-xs text-gray-300 italic">No activity yet.</p>}
+                                    {expenses.length === 0 && <p className="text-center py-6 text-xs text-gray-300 italic">No bills recorded yet.</p>}
                                     {expenses.slice(-3).reverse().map(e => (
                                         <div key={e.id} className={`p-6 rounded-[2rem] border border-gray-100 flex justify-between items-center shadow-sm ${e.isSettlement?'bg-rose-50/50 border-rose-100':'bg-white'}`}>
                                             <div className="flex items-center gap-4">
@@ -321,13 +339,13 @@
                                                     {e.isSettlement ? <Icons.Sparkles /> : <Icons.Receipt />}
                                                 </div>
                                                 <div>
-                                                    <p className={`font-bold text-sm ${e.isSettlement?'text-rose-600 italic':'text-gray-800'}`}>{e.description}</p>
+                                                    <p className={`font-bold text-sm leading-tight ${e.isSettlement?'text-rose-600 italic':'text-gray-800'}`}>{e.description}</p>
                                                     <p className="text-[9px] text-teal-500 font-bold uppercase mt-1 tracking-tight">{members.find(m=>m.id===e.payerId)?.name} paid</p>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-4">
                                                 <p className="font-mono font-black text-gray-800 text-lg">{parseFloat(e.amount).toFixed(2)}{symbol}</p>
-                                                <button onClick={()=>{setEditingExpense(e);setShowAddExpense(true);}} className="text-gray-200 hover:text-teal-500 p-1"><Icons.Edit /></button>
+                                                <button onClick={()=>{setEditingExpense(e);setShowAddExpense(true);}} className="text-gray-200 hover:text-teal-500 transition-colors"><Icons.Edit /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -348,15 +366,15 @@
                                                 </div>
                                             </div>
                                             <div className="flex gap-1 bg-white/50 backdrop-blur p-1 rounded-full shadow-sm">
-                                                <button onClick={()=>{setEditingExpense(e);setShowAddExpense(true);}} className="p-2 text-gray-400 hover:text-teal-500"><Icons.Edit /></button>
+                                                <button onClick={()=>{setEditingExpense(e);setShowAddExpense(true);}} className="p-2 text-gray-400 hover:text-teal-500 transition-colors"><Icons.Edit /></button>
                                                 <button onClick={async ()=>{
                                                     const {db,doc,deleteDoc}=window.BasuShareFirebase; 
                                                     await deleteDoc(doc(db,'artifacts','basushare-app','public','data',`${groupId}-expenses`, e.id));
-                                                }} className="p-2 text-gray-400 hover:text-rose-500"><Icons.Trash /></button>
+                                                }} className="p-2 text-gray-400 hover:text-rose-500 transition-colors"><Icons.Trash /></button>
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-4 pt-6 border-t border-dashed border-gray-100">
-                                            {Object.entries(e.splits || {}).map(([mid,amt])=>(<div key={mid} className="flex justify-between bg-gray-50/50 p-3 rounded-2xl text-[10px] font-black"><span className="text-gray-400 truncate mr-2">{members.find(m=>m.id===mid)?.name}</span><span className="text-gray-700">{parseFloat(amt).toFixed(2)}{symbol}</span></div>))}
+                                            {Object.entries(e.splits || {}).map(([mid,amt])=>(<div key={mid} className="flex justify-between bg-gray-50/50 p-3 rounded-2xl text-[10px] font-bold"><span className="text-gray-400 truncate mr-2">{members.find(m=>m.id===mid)?.name}</span><span className="text-gray-700">{parseFloat(amt).toFixed(2)}{symbol}</span></div>))}
                                         </div>
                                     </div>
                                 ))}
@@ -365,7 +383,7 @@
 
                         {view === 'settle' && (
                             <div className="space-y-6 animate-pop">
-                                {settlements.length === 0 ? <div className="text-center py-24 bg-rose-50 rounded-[4rem] border-2 border-dashed border-rose-100"><p className="font-extrabold text-rose-800 text-2xl tracking-tight">Everything is settled!</p></div> :
+                                {settlements.length === 0 ? <div className="text-center py-24 bg-rose-50 rounded-[4rem] border-2 border-dashed border-rose-100"><p className="font-extrabold text-rose-800 text-2xl tracking-tight">Everything is settled! 🎉</p></div> :
                                 settlements.map((s,i) => (
                                     <div key={i} className="bg-gray-900 p-8 rounded-[3.5rem] text-white shadow-2xl space-y-8">
                                         <div className="flex justify-between items-center text-center px-2">
@@ -384,8 +402,8 @@
                                                 isSettlement: true,
                                                 createdAt: Date.now()
                                             });
-                                            showToast("Settled! 🎉");
-                                        }} className="w-full bg-white text-gray-900 py-6 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">Mark as paid</button>
+                                            showToast("Record updated! 🎉");
+                                        }} className="w-full bg-white text-gray-900 py-6 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl">Mark as Paid</button>
                                     </div>
                                 ))}
                             </div>
@@ -401,7 +419,7 @@
                                                 <Avatar name={m.name} size="w-12 h-12" active={currentMemberId === m.id} />
                                                 <span className="font-extrabold text-gray-800 text-lg tracking-tight">{m.name}</span>
                                             </div>
-                                            <div className="w-10 h-10 rounded-full bg-teal-50 text-teal-400 flex items-center justify-center font-bold shadow-inner">✓</div>
+                                            <div className="w-10 h-10 rounded-full bg-teal-50 text-teal-400 flex items-center justify-center font-bold shadow-inner transition-transform active:scale-90" onClick={() => setCurrentMemberId(m.id)}>✓</div>
                                         </div>
                                     ))}
                                 </div>
@@ -420,7 +438,7 @@
                     {showAddMember && (
                         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[60] flex items-center justify-center p-10 animate-fade">
                             <div className="bg-white w-full rounded-[4rem] p-12 shadow-2xl">
-                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter">New member</h3><button onClick={()=>setShowAddMember(false)} className="bg-gray-100 p-4 rounded-full active:scale-90"><Icons.X/></button></div>
+                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter">New member</h3><button onClick={()=>setShowAddMember(false)} className="bg-gray-100 p-4 rounded-full active:scale-90 transition-colors"><Icons.X/></button></div>
                                 <form onSubmit={async (e)=>{
                                     e.preventDefault(); 
                                     const {db,collection,addDoc}=window.BasuShareFirebase; 
@@ -428,7 +446,7 @@
                                     setShowAddMember(false);
                                 }} className="space-y-8">
                                     <input name="nm" required placeholder="Member name..." className="w-full bg-gray-50 border-none rounded-[2rem] p-6 text-xl font-bold focus:ring-2 focus:ring-teal-100 outline-none placeholder:text-gray-300" autoFocus />
-                                    <button className="w-full bg-teal-600 text-white py-6 rounded-[2.5rem] font-black text-[10px] uppercase tracking-widest shadow-2xl active:scale-95 shadow-teal-900/20">Add to circle</button>
+                                    <button className="w-full bg-teal-600 text-white py-6 rounded-[2.5rem] font-black text-[10px] uppercase tracking-widest shadow-2xl active:scale-95 transition-all">Confirm Member</button>
                                 </form>
                             </div>
                         </div>
@@ -437,7 +455,7 @@
                     {showAddExpense && (
                         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xl z-[60] flex items-end justify-center">
                             <div className="bg-white w-full max-w-md rounded-t-[4.5rem] p-12 max-h-[95vh] overflow-y-auto no-scrollbar shadow-2xl border-t border-white/50 animate-pop">
-                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">{editingExpense?'Fix bill':'Add bill'}</h3><button onClick={()=>{setShowAddExpense(false);setEditingExpense(null);}} className="bg-gray-100 p-4 rounded-full active:scale-90"><Icons.X/></button></div>
+                                <div className="flex justify-between items-center mb-10"><h3 className="text-3xl font-extrabold text-gray-900 tracking-tighter uppercase">{editingExpense?'Fix bill':'Add bill'}</h3><button onClick={()=>{setShowAddExpense(false);setEditingExpense(null);}} className="bg-gray-100 p-4 rounded-full active:scale-90 transition-colors"><Icons.X/></button></div>
                                 <AddExpenseContent 
                                     members={members} symbol={symbol} initialData={editingExpense}
                                     onSave={async (d)=>{
@@ -473,14 +491,11 @@
                 setVals(init);
             }, [method, members, initialData]);
 
-            const getFinalSplits = () => {
-                const total = parseFloat(amt) || 0;
-                const out = {};
+            const getSplits = () => {
+                const out = {}; const total = parseFloat(amt) || 0;
                 if (method === 'equal') members.forEach(m => out[m.id] = (total / (members.length || 1)).toFixed(2));
-                else if (method === 'parts') {
-                    const sum = Object.values(vals).reduce((a,b)=>a+parseFloat(b), 0);
-                    members.forEach(m => out[m.id] = (total * (parseFloat(vals[m.id]) / (sum || 1))).toFixed(2));
-                } else if (method === 'percentage') members.forEach(m => out[m.id] = (total * (parseFloat(vals[m.id]) / 100)).toFixed(2));
+                else if (method === 'parts') { const sum = Object.values(vals).reduce((a,b)=>a+parseFloat(b), 0); members.forEach(m => out[m.id] = (total * (parseFloat(vals[m.id]) / (sum || 1))).toFixed(2)); }
+                else if (method === 'percentage') members.forEach(m => out[m.id] = (total * (parseFloat(vals[m.id]) / 100)).toFixed(2));
                 else members.forEach(m => out[m.id] = (parseFloat(vals[m.id]) || 0).toFixed(2));
                 return out;
             };
@@ -488,24 +503,24 @@
             return (
                 <div className="space-y-12 pb-10">
                     <div className="space-y-4">
-                        <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Dinner, Cinema, Coffee..." className="text-4xl font-extrabold border-none w-full p-0 focus:ring-0 placeholder:text-gray-200 outline-none tracking-tighter" />
-                        <div className="flex items-center border-b-8 border-teal-50 pb-6"><input type="number" step="0.01" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00" className="text-8xl font-mono font-black border-none p-0 focus:ring-0 w-2/3 outline-none tracking-tighter" /><span className="text-5xl text-gray-200 font-bold ml-4">{symbol}</span></div>
+                        <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Dinner, movie, coffee..." className="text-4xl font-extrabold border-none w-full p-0 focus:ring-0 placeholder:text-gray-200 outline-none tracking-tighter" />
+                        <div className="flex items-center border-b-8 border-teal-50 pb-6"><input type="number" step="0.01" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00" className="text-8xl font-mono font-black border-none p-0 focus:ring-0 w-2/3 outline-none" /><span className="text-5xl text-gray-200 font-bold ml-4">{symbol}</span></div>
                     </div>
                     <div className="grid grid-cols-2 gap-8">
-                        <div className="space-y-3"><label className="text-[10px] font-black uppercase tracking-widest text-gray-400 block px-2">Who paid?</label><select value={payer} onChange={e=>setPayer(e.target.value)} className="w-full bg-gray-50 border-none rounded-3xl font-extrabold py-5 px-6 outline-none focus:ring-2 focus:ring-teal-100 appearance-none">{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
-                        <div className="space-y-3"><label className="text-[10px] font-black uppercase tracking-widest text-gray-400 block px-2">How to split?</label><select value={method} onChange={e=>setMethod(e.target.value)} className="w-full bg-rose-50 border-none rounded-3xl font-extrabold py-5 px-6 text-rose-500 outline-none focus:ring-2 focus:ring-rose-200 appearance-none"><option value="equal">Equally</option><option value="parts">Weighting</option><option value="percentage">Percent Share</option><option value="actual">Exact Amounts</option></select></div>
+                        <div className="space-y-3"><label className="text-[10px] font-black uppercase text-gray-400 block px-2 tracking-widest">Paid by</label><select value={payer} onChange={e=>setPayer(e.target.value)} className="w-full bg-gray-50 border-none rounded-3xl font-extrabold py-5 px-6 outline-none appearance-none focus:ring-2 focus:ring-teal-100">{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
+                        <div className="space-y-3"><label className="text-[10px] font-black uppercase text-gray-400 block px-2 tracking-widest">Split how?</label><select value={method} onChange={e=>setMethod(e.target.value)} className="w-full bg-rose-50 border-none rounded-3xl font-extrabold py-5 px-6 text-rose-500 outline-none appearance-none focus:ring-2 focus:ring-rose-100"><option value="equal">Equally</option><option value="parts">Weighting</option><option value="percentage">Share %</option><option value="actual">Exact Amt</option></select></div>
                     </div>
                     <div className="bg-gray-50 p-10 rounded-[3.5rem] space-y-6 shadow-inner">
-                        <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.4em] text-center mb-4 px-1">Internal Distribution</p>
+                        <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.4em] text-center mb-4">Allocation Details</p>
                         {members.map(m => (
-                            <div key={m.id} className="flex justify-between items-center bg-white p-5 rounded-[2rem] shadow-sm">
-                                <div className="flex items-center gap-3"><Avatar name={m.name} size="w-10 h-10" /><span className="font-extrabold text-gray-600 text-sm tracking-tight">{m.name}</span></div>
-                                {method === 'equal' ? <span className="font-mono font-black text-teal-500 text-lg whitespace-nowrap">{(parseFloat(amt)/(members.length || 1)).toFixed(2)}{symbol}</span> :
-                                <input type="number" step="0.1" value={vals[m.id] || ''} onChange={e=>setVals({...vals, [m.id]: e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 w-32 text-right font-mono font-black text-teal-600 outline-none focus:ring-2 focus:ring-teal-200 text-lg" />}
+                            <div key={m.id} className="flex justify-between items-center bg-white p-5 rounded-3xl shadow-sm">
+                                <div className="flex items-center gap-3"><Avatar name={m.name} size="w-10 h-10"/><span className="font-bold text-gray-600 truncate">{m.name}</span></div>
+                                {method === 'equal' ? <span className="font-mono font-black text-teal-500 text-lg">{(parseFloat(amt)/(members.length || 1)).toFixed(2)}{symbol}</span> :
+                                <input type="number" step="0.1" value={vals[m.id] || ''} onChange={e=>setVals({...vals, [m.id]: e.target.value})} className="bg-gray-50 border-none rounded-2xl p-4 w-32 text-right font-mono font-black text-teal-600 outline-none focus:ring-2 focus:ring-teal-100" />}
                             </div>
                         ))}
                     </div>
-                    <button onClick={()=>onSave({description:desc, amount:amt, payerId:payer, splitMethod:method, splits:getFinalSplits()})} className="w-full bg-teal-600 text-white py-8 rounded-[3.5rem] font-black text-[11px] uppercase tracking-[0.3em] shadow-2xl shadow-teal-900/20 active:scale-95 hover:bg-teal-700 transition-all">Submit to circle</button>
+                    <button onClick={()=>onSave({description:desc, amount:amt, payerId:payer, splitMethod:method, splits:getSplits()})} className="w-full bg-teal-500 text-white py-8 rounded-[3.5rem] font-black text-[11px] uppercase tracking-[0.3em] shadow-xl shadow-teal-900/10 active:scale-95 transition-all hover:bg-teal-600">Record to family ledger</button>
                 </div>
             );
         };
